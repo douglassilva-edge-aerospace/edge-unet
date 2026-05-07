@@ -1,3 +1,6 @@
 __pycache__/
 .venv/
 unet_imagenette*
+datasets/cloudsen12/cloudsen12-l1c.0000.part.taco
+datasets/cloudsen12/cloudsen12-l1c.0001.part.taco
+datasets/cloudsen12/mini.taco

@@ -22,6 +22,12 @@ import toml
 
 from unet import UNet
 
+# Taco dataset related
+import rasterio as rio
+import tacoreader
+from torch.utils.data import random_split
+from taco_data_loader import TacoDataLoader
+
 import argparse
 
 def reverse_transform(inp):
@@ -81,26 +87,25 @@ def calc_loss(pred, target, metrics, bce_weight=0.5):
 
     return loss
 
-def get_data_loaders(batch_size=25):
-    trans = transforms.Compose([
-        transforms.Resize((192, 192)),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406],
-                             [0.229, 0.224, 0.225])
-    ])
+def get_data_loaders(taco_file="datasets/cloudsen12/mini.taco", batch_size=4):
+    dataset = TacoDataLoader(taco_file)
 
-    train_set = datasets.ImageFolder("train", transform=trans)
-    val_set = datasets.ImageFolder("val", transform=trans)
+    val_size = max(1, int(0.2 * len(dataset)))
+    train_size = len(dataset) - val_size
 
-    dataloaders = {
-        'train': DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=0),
-        'val': DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=0)
+    train_set, val_set = random_split(
+        dataset,
+        [train_size, val_size],
+        generator=torch.Generator().manual_seed(42),
+    )
+
+    return {
+        "train": DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=0),
+        "val": DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=0),
     }
 
-    return dataloaders
-
 def train_model(model, optimizer, scheduler, num_epochs=60,batch_size=25):
-    dataloaders = get_data_loaders()
+    dataloaders = get_data_loaders(batch_size=batch_size)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     best_model_wts = copy.deepcopy(model.state_dict())
@@ -124,12 +129,9 @@ def train_model(model, optimizer, scheduler, num_epochs=60,batch_size=25):
             metrics = defaultdict(float)
             epoch_samples = 0
 
-            for inputs, _ in dataloaders[phase]:
+            for inputs, labels in dataloaders[phase]:
                 inputs = inputs.to(device)
-
-                # Imagenette has no segmentation masks.
-                # Use the image itself as the target.
-                labels = inputs
+                labels = labels.to(device)
 
                 optimizer.zero_grad()
 
@@ -158,14 +160,57 @@ def train_model(model, optimizer, scheduler, num_epochs=60,batch_size=25):
     print('Best val loss: {:4f}'.format(best_loss))
 
     model.load_state_dict(best_model_wts)
+    save_validation_prediction(model, dataloaders, "val_prediction.png")
     return model
 
-    # load best model weights
-    model.load_state_dict(best_model_wts)
-    return model
+def save_validation_prediction(model, dataloaders, output_path="val_prediction.png"):
+    """
+    Prediction Image generated to show model segmentation performance
+    this is how the combined image file should be interpreted: 
+    [input image] [ground truth] [soft probability] [binary segmentation]
+    """
+    from PIL import Image
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model.eval()
+
+    inputs, labels = next(iter(dataloaders["val"]))
+    inputs = inputs.to(device)
+
+    with torch.no_grad():
+        pred = torch.sigmoid(model(inputs))
+
+    img = inputs[0].detach().cpu().numpy()
+    gt = labels[0].detach().cpu().numpy()[0]
+    mask = pred[0].detach().cpu().numpy()[0]
+
+    # probability map
+    prob = (mask * 255).astype(np.uint8)
+
+    # binary threshold map
+    binary = ((mask > 0.5) * 255).astype(np.uint8)
+
+    # RGB conversions for visualization
+    img = np.transpose(img, (1, 2, 0))
+    img = np.clip(img, 0, 1)
+
+    gt = np.stack([gt, gt, gt], axis=-1)
+
+    prob_rgb = np.stack([prob, prob, prob], axis=-1)
+    binary_rgb = np.stack([binary, binary, binary], axis=-1)
+
+    combined = np.concatenate([
+        (img * 255).astype(np.uint8),
+        (gt * 255).astype(np.uint8),
+        prob_rgb,
+        binary_rgb
+    ], axis=1)
+
+    Image.fromarray(combined).save(output_path)
+    print(f"Saved validation comparison to {output_path}")
 
 def run(UNet, num_epochs=60, batch_size=25):
-    num_class = 3
+    num_class = 1
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     model = UNet(num_class).to(device)
@@ -183,8 +228,9 @@ def run(UNet, num_epochs=60, batch_size=25):
 
     model = train_model(model, optimizer_ft, exp_lr_scheduler, num_epochs,batch_size)
 
-    torch.save(model.state_dict(), "unet_imagenette.pth")
-    print("Saved PyTorch weights to unet_imagenette.pth")
+    torch.save(model.state_dict(), "unet_segmentation.pth")
+    print("#==================== Results ====================#")
+    print("Saved PyTorch weights to unet_segmentation.pth")
 
     model.eval()
 
@@ -219,22 +265,18 @@ def run(UNet, num_epochs=60, batch_size=25):
 
     pred = pred.data.cpu().numpy()
 
-    print(pred.shape)
-
-    input_images_rgb = [reverse_transform(x) for x in inputs.cpu()]
-    target_masks_rgb = [masks_to_colorimg(x) for x in labels.cpu().numpy()]
-    pred_rgb = [masks_to_colorimg(x) for x in pred]
-
+    # Load test image for onnx export
     from PIL import Image
     img = Image.open("test_img.png").convert("RGB")
     input_tensor = trans(img).unsqueeze(0).to(device)
 
+    # Save model in onnx format(important for Hailo dfc conversion later)
     torch.onnx.export(
     model,
     input_tensor,
-    "unet_imagenette.onnx",
+    "unet_segmentation.onnx",
     export_params=True,
-    opset_version=11,
+    opset_version=18,
     do_constant_folding=True,
     input_names=["input"],
     output_names=["output"],
