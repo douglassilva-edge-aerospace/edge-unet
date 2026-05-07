@@ -2,9 +2,12 @@
 We start by first downloading CloudSen12 dataset in taco format.
 """
 from huggingface_hub import hf_hub_download
+from os import path
+import tacoreader.v1 as tacoreader
 
-dataset1 = hf_hub_download("tacofoundation/CloudSEN12", "cloudsen12-l1c.0000.part.taco", repo_type="dataset", local_dir=".")
-dataset2 = hf_hub_download("tacofoundation/CloudSEN12", "cloudsen12-l1c.0001.part.taco", repo_type="dataset", local_dir=".")
+if not path.exists("cloudsen12-l1c.0000.part.taco"):
+    dataset1 = hf_hub_download("tacofoundation/CloudSEN12", "cloudsen12-l1c.0000.part.taco", repo_type="dataset", local_dir=".")
+    dataset2 = hf_hub_download("tacofoundation/CloudSEN12", "cloudsen12-l1c.0001.part.taco", repo_type="dataset", local_dir=".")
 
 """
 But this might be 1TB file and we are only interested on images
@@ -17,7 +20,7 @@ import pandas as pd
 
 # 1. Load the taco dataset
 # HINT: Every TACO dataset is a GeoDataFrame if it fullfill stac requirements
-dataset = tacoreader.load("tacofoundation:cloudsen12-l1c")
+dataset = tacoreader.load(["cloudsen12-l1c.0000.part.taco", "cloudsen12-l1c.0001.part.taco"])
 
 # 2. Spatial Query [Only Switzerland]
 subset_sp = dataset[dataset["rai:admin0"] == "Switzerland"]
@@ -34,7 +37,7 @@ print(subset_final.plot())
 tacoreader.compile(dataframe=subset_final, output="mini.taco", nworkers=4)
 
 # 6. Load your new TACO file
-minitaco = tacoreader.load("mini.taco")
+# minitaco = tacoreader.load("mini.taco")
 
 # Final comments: Actually this is a Tortilla files since it does not have COLLECTION properties
 # If you want to convert it to TACO, use tacotoolbox.tortilla2taco.
