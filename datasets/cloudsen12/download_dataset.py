@@ -23,7 +23,8 @@ import pandas as pd
 dataset = tacoreader.load(["cloudsen12-l1c.0000.part.taco", "cloudsen12-l1c.0001.part.taco"])
 
 # 2. Spatial Query [Only Switzerland]
-subset_sp = dataset[dataset["rai:admin0"] == "Switzerland"]
+eligible_countries = ["Switzerland", "Austria", "New Zealand","Canada", "Norway", "Chile"]
+subset_sp = dataset[dataset["rai:admin0"].isin(eligible_countries)]
 
 # 3. Temporal Query [Only 2022]
 # years = pd.to_datetime(subset_sp["stac:time_start"], unit='s').dt.year

@@ -2,7 +2,7 @@ import torch
 from torchvision import transforms
 from PIL import Image
 
-from unet import UNet
+from unet_v1 import UNet
 
 
 def main():
