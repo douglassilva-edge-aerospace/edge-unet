@@ -21,7 +21,8 @@ import copy
 import toml
 
 # from unet_v1 import UNet
-from unet_v2 import UNetV2 as UNet
+# from unet_v2 import UNetV2 as UNet
+from unet_v2_small import UNetV2Small as UNet
 
 # Taco dataset related
 import rasterio as rio
